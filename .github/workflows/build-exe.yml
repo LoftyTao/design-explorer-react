@@ -27,31 +27,45 @@ jobs:
         run: npm ci
 
       # ----------------------------------------------------------------
-      # 1. 同步版本号 (Git Tag -> package.json)
+      # 1. 设置 Vite 基础路径 (防止 index.html 引用错误)
       # ----------------------------------------------------------------
-      - name: Sync Version from Tag
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          TAG_NAME: ${{ github.ref_name }}
+      - name: Configure Vite Base
         run: |
-          node -e "
+          $script = @'
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const version = process.env.TAG_NAME.replace(/^v/, '');
-          pkg.version = version;
+          pkg.homepage = '.';
+          
+          // 强制 build 命令使用相对路径
+          if (pkg.scripts && pkg.scripts.build) {
+             if (!pkg.scripts.build.includes('--base')) {
+                // 简单的字符串追加，比正则更稳健
+                pkg.scripts.build += ' --base=./';
+             }
+          }
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          console.log('Updated package.json version to:', version);
-          "
+          '@
+          $script | Out-File -FilePath config-vite.cjs -Encoding utf8
+          node config-vite.cjs
 
       # ----------------------------------------------------------------
-      # 2. 激进路径修正 (修复资源加载 404 问题)
+      # 2. 执行构建 (生成 dist 目录)
       # ----------------------------------------------------------------
-      - name: Aggressive Path Patching
+      - name: Build for production
+        run: npm run build
+
+      # ----------------------------------------------------------------
+      # 3. [核心修复] 暴力修补构建产物 (Patch Dist)
+      # 构建完成后，直接修改 dist/assets 下的 JS 文件
+      # 解决 "/D:/Multiple..." 这种路径错误
+      # ----------------------------------------------------------------
+      - name: Patch Built Javascript Files
         run: |
           $script = @'
           const fs = require('fs');
           const path = require('path');
 
+          // 定义需要修复的路径关键词
           const targets = [
             '/Multiple -Image-Layouts',
             '/daylight-factor',
@@ -68,7 +82,7 @@ jobs:
               if (stat && stat.isDirectory()) {
                 results = results.concat(walk(file));
               } else {
-                if (file.match(/\.(js|jsx|ts|tsx|json|css|html)$/)) {
+                if (file.endsWith('.js')) {
                   results.push(file);
                 }
               }
@@ -76,63 +90,52 @@ jobs:
             return results;
           }
 
-          const allFiles = [...walk('src'), ...walk('public')];
+          // 扫描 dist/assets 目录
+          const distFiles = walk(path.join('dist', 'assets'));
           let patchCount = 0;
 
-          allFiles.forEach(file => {
+          distFiles.forEach(file => {
             let content = fs.readFileSync(file, 'utf8');
             let original = content;
             
             targets.forEach(tgt => {
-              const replacement = '.' + tgt;
+              // 替换逻辑：将所有 "/FolderName" 替换为 "./FolderName"
+              // 这种全局替换不依赖引号类型，非常彻底
+              // 注意：我们会检查前面是否已经是 . 了，防止重复替换
+              
+              // 1. 简单替换： "/Multiple -> "./Multiple
+              // 我们先通过 split/join 替换所有出现的绝对路径引用
               if (content.includes(tgt)) {
-                 content = content.split(tgt).join(replacement);
+                 // 这是一个比较安全的替换策略，针对 web 路径引用
+                 content = content.split(tgt).join('.' + tgt);
+                 
+                 // 修正可能产生的双点错误 (比如源代码里已经是 ./ 了，结果变成了 ..//)
+                 content = content.split('..' + tgt).join('.' + tgt);
               }
             });
 
             if (content !== original) {
               fs.writeFileSync(file, content);
-              console.log(`[Patched] ${file}`);
+              console.log(`[Fixed] Paths in: ${file}`);
               patchCount++;
             }
           });
-          console.log(`Total files patched: ${patchCount}`);
+          
+          console.log(`Total built files patched: ${patchCount}`);
           '@
           
-          $script | Out-File -FilePath patch-source.cjs -Encoding utf8
-          node patch-source.cjs
+          $script | Out-File -FilePath patch-dist.cjs -Encoding utf8
+          node patch-dist.cjs
 
       # ----------------------------------------------------------------
-      # 3. 配置 Vite 相对路径
+      # 4. 安装 Electron 相关依赖
       # ----------------------------------------------------------------
-      - name: Configure Vite Base Path
-        run: |
-           node -e "
-           const fs = require('fs');
-           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-           pkg.homepage = '.';
-           
-           if (pkg.scripts && pkg.scripts.build) {
-             if (pkg.scripts.build.includes('vite build')) {
-                if (!pkg.scripts.build.includes('--base')) {
-                   pkg.scripts.build = pkg.scripts.build.replace('vite build', 'vite build --base=./');
-                }
-             } else if (pkg.scripts.build.trim() === 'vite') {
-               pkg.scripts.build = 'vite build --base=./';
-             }
-           }
-           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-           "
-
-      - name: Build for production
-        run: npm run build
-
       - name: Install Electron and Electron Builder
         run: |
           npm install --save-dev electron electron-builder
 
       # ----------------------------------------------------------------
-      # 4. 生成 Electron 主进程
+      # 5. 生成 Electron 主进程文件
       # ----------------------------------------------------------------
       - name: Create Electron main process file
         run: |
@@ -147,11 +150,14 @@ jobs:
               webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
-                webSecurity: false
+                webSecurity: false // 允许加载本地文件
               }
             });
             
+            // 使用绝对路径加载
             win.loadFile(path.join(__dirname, 'dist', 'index.html'));
+            
+            // 保持开启调试工具，如果这次成功了，下次你可以把这行删掉
             win.webContents.openDevTools();
           }
 
@@ -168,46 +174,62 @@ jobs:
           $content | Out-File -FilePath electron-main.cjs -Encoding utf8
 
       # ----------------------------------------------------------------
-      # 5. [关键修复] 配置安装包 (NSIS & ArtifactName)
-      # 改用生成文件的方式执行，彻底解决 PowerShell 转义报错
+      # 6. 配置 package.json (版本号 + 安装向导 + 文件名)
       # ----------------------------------------------------------------
-      - name: Update package.json for Electron Config
+      - name: Configure Package.json and Build Settings
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG_NAME: ${{ github.ref_name }}
         run: |
           $script = @'
-          const fs = require('fs'); 
-          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); 
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           
-          pkg.main = 'electron-main.cjs'; 
+          // 1. 设置版本号 (去 v)
+          const version = process.env.TAG_NAME.replace(/^v/, '');
+          pkg.version = version;
           
+          // 2. 设置入口
+          pkg.main = 'electron-main.cjs';
+          
+          // 3. 配置 Electron Builder
+          // 注意：这里使用纯字符串拼接，避免 Shell 的变量干扰
           pkg.build = {
-            appId: 'com.designexplorer.app', 
+            appId: 'com.designexplorer.app',
             productName: 'Design Explorer',
             files: ['dist/**/*', 'electron-main.cjs', 'package.json'],
-            // 下面这行字符串中的 ${} 将被原样保留，供 Electron Builder 使用
+            // 使用 Electron Builder 的标准宏 ${productName}
             artifactName: '${productName}-Setup-${version}.${ext}',
             win: {
-              target: 'nsis', 
+              target: 'nsis',
               icon: 'public/icon.ico'
             },
             nsis: {
-              oneClick: false,
-              allowToChangeInstallationDirectory: true,
+              oneClick: false,                          // 显示安装向导
+              allowToChangeInstallationDirectory: true, // 允许修改路径
               createDesktopShortcut: true,
               perMachine: false
             }
-          }; 
+          };
           
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          console.log('Package.json updated with version:', version);
           '@
-
+          
           $script | Out-File -FilePath update-config.cjs -Encoding utf8
           node update-config.cjs
 
+      # ----------------------------------------------------------------
+      # 7. 打包 Windows Exe
+      # ----------------------------------------------------------------
       - name: Build Windows executable
         run: npx electron-builder --win --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # ----------------------------------------------------------------
+      # 8. 上传产物
+      # ----------------------------------------------------------------
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
