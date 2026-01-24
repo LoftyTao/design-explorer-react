@@ -1,8 +1,42 @@
 import { XCircle, ArrowUpDown, ArrowUp, ArrowDown, Table2 } from 'lucide-react';
 import { cleanName } from '../../utils/constants';
 import { Pagination } from '../ui/Pagination';
+import { useEffect, useRef } from 'react';
 
 export const InteractiveTable = ({ data, columns, selectedIds, onRowToggle, onClearSelection, sortConfig, onSort, onClearSorts, currentPage, itemsPerPage, onPageChange }) => {
+  const tableBodyRef = useRef(null);
+  const tableContainerRef = useRef(null);
+
+  useEffect(() => {
+    if (selectedIds.size === 1) {
+      const selectedId = [...selectedIds][0];
+      
+      const scrollToRow = () => {
+        const selectedRow = tableBodyRef.current?.querySelector(`[data-row-id="${selectedId}"]`);
+        const container = tableContainerRef.current;
+        
+        if (selectedRow && container) {
+          const containerRect = container.getBoundingClientRect();
+          const rowRect = selectedRow.getBoundingClientRect();
+          const rowTop = selectedRow.offsetTop;
+          const containerScrollTop = container.scrollTop;
+          const containerHeight = containerRect.height;
+          const rowHeight = rowRect.height;
+          
+          const targetScrollTop = rowTop - (containerHeight / 2) + (rowHeight / 2);
+          
+          container.scrollTo({
+            top: targetScrollTop,
+            behavior: 'smooth'
+          });
+        }
+      };
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(scrollToRow);
+      });
+    }
+  }, [selectedIds, currentPage]);
   const getSortIcon = (colKey) => {
     const configIndex = sortConfig.findIndex(s => s.key === colKey);
     if (configIndex === -1) return <ArrowUpDown size={10} className="opacity-20 ml-1" />;
@@ -43,7 +77,7 @@ export const InteractiveTable = ({ data, columns, selectedIds, onRowToggle, onCl
         </div>
       </div>
       
-      <div className="overflow-auto h-48 sm:h-56 lg:h-64 custom-scrollbar bg-white">
+      <div ref={tableContainerRef} className="overflow-auto h-48 sm:h-56 lg:h-64 custom-scrollbar bg-white">
         <table className="w-full text-xs text-left border-collapse">
           <thead className="text-zinc-500 bg-white sticky top-0 shadow-sm z-10">
             <tr>
@@ -60,11 +94,11 @@ export const InteractiveTable = ({ data, columns, selectedIds, onRowToggle, onCl
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-50">
+          <tbody ref={tableBodyRef} className="divide-y divide-zinc-50">
             {paginatedData.map(row => {
               const isSelected = selectedIds.has(row.id);
               return (
-                <tr key={row.id} onClick={() => onRowToggle(row.id)} 
+                <tr key={row.id} data-row-id={row.id} onClick={() => onRowToggle(row.id)} 
                   className={`cursor-pointer transition-all duration-150 border-l-4
                   ${isSelected ? 'bg-cyan-100 border-l-cyan-500 shadow-sm' : 'bg-white border-l-transparent hover:bg-zinc-50 hover:border-l-zinc-300'}`}
                 >

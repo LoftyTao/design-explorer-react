@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import SplashScreen from './SplashScreen';
 import { Header } from './components/layout/Header';
 import { ErrorMessage } from './components/layout/ErrorMessage';
@@ -47,22 +47,40 @@ export default function App() {
 
   const { filters, filteredData, addFilter, removeFilter, clearColumnFilter, resetAllFilters } = useFilters(data);
   const { sortConfig, sortedData, handleSort, clearSorts } = useSort(filteredData);
-  const { selectedIds, galleryActiveId, setGalleryActiveId, toggleRowSelection, clearSelection } = useSelection(sortedData);
+  const { selectedIds, galleryActiveId, galleryActiveIdKey, setGalleryActiveId, toggleRowSelection, clearSelection } = useSelection(sortedData);
+  const prevDatasetIdRef = useRef(null);
 
   useEffect(() => {
     loadJSZip().catch(err => console.error("Failed to load JSZip", err));
   }, []);
 
   useEffect(() => {
-    if (activeDataset) {
+    if (activeDataset && activeDatasetId !== prevDatasetIdRef.current) {
       setColorBy(activeDataset.defaultColorBy);
       setActiveImgCol(activeDataset.defaultImgCol);
       setGalleryPage(1);
       setTablePage(1);
+      resetAllFilters();
+      clearSorts();
+      clearSelection();
+      prevDatasetIdRef.current = activeDatasetId;
     }
-  }, [activeDataset]);
+  }, [activeDataset, activeDatasetId, resetAllFilters, clearSorts, clearSelection]);
 
   const activeGalleryItem = useMemo(() => data.find(d => d.id === galleryActiveId), [data, galleryActiveId]);
+
+  useEffect(() => {
+    if (galleryActiveId && sortedData.length > 0) {
+      const index = sortedData.findIndex(d => d.id === galleryActiveId);
+      if (index !== -1) {
+        const newPage = Math.ceil((index + 1) / itemsPerPage);
+        console.log('跳转信息:', { galleryActiveId, index, newPage, totalItems: sortedData.length });
+        setTablePage(newPage);
+      } else {
+        console.log('未找到对应的 ID:', galleryActiveId);
+      }
+    }
+  }, [galleryActiveIdKey, galleryActiveId, sortedData, itemsPerPage]);
 
   return (
     <>

@@ -1,9 +1,21 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { FilterService } from '../services/FilterService';
 
 export function useFilters(data) {
   const [filters, setFilters] = useState({});
   const filterServiceRef = useRef(new FilterService());
+  const prevDataRef = useRef(null);
+
+  useEffect(() => {
+    const currentDataId = data.length > 0 ? data[0].id : null;
+    const prevDataId = prevDataRef.current;
+
+    if (currentDataId !== prevDataId) {
+      const newFilters = filterServiceRef.current.resetAllFilters();
+      setFilters(newFilters);
+      prevDataRef.current = currentDataId;
+    }
+  }, [data]);
 
   const filteredData = useMemo(() => {
     return filterServiceRef.current.applyFilters(data);

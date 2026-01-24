@@ -1,7 +1,18 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 
 export function useSort(data) {
   const [sortConfig, setSortConfig] = useState([]);
+  const prevDataRef = useRef(null);
+
+  useEffect(() => {
+    const currentDataId = data.length > 0 ? data[0].id : null;
+    const prevDataId = prevDataRef.current;
+
+    if (currentDataId !== prevDataId) {
+      setSortConfig([]);
+      prevDataRef.current = currentDataId;
+    }
+  }, [data]);
 
   const sortedData = useMemo(() => {
     if (sortConfig.length === 0) return data;
