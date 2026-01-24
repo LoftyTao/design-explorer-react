@@ -26,8 +26,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 核心修复步骤 1：在构建前设置 homepage 为 "."
-      # 这强制 React/Vite 使用相对路径引资源，解决白屏问题
+      # 1. 设置 homepage 为 "." (解决白屏的基础)
       - name: Set homepage for relative paths
         run: |
            node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.homepage = '.'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
@@ -39,8 +38,7 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
-      # 核心修复步骤 2：在生成的代码中加入 openDevTools()
-      # 这样程序启动时会自动打开控制台，你可以看到具体的报错信息（如 404 或 JS 错误）
+      # 2. 生成主进程文件 (关键修复：使用 path.join(__dirname) 构建绝对路径)
       - name: Create Electron main process file
         run: |
           $content = @"
@@ -57,10 +55,11 @@ jobs:
               }
             });
             
-            // 生产环境加载文件
-            win.loadFile('dist/index.html');
+            // 修复点：使用 __dirname 拼接绝对路径，解决 'Not allowed to load local resource' 问题
+            // 这种写法兼容 ASAR 打包环境
+            win.loadFile(path.join(__dirname, 'dist', 'index.html'));
 
-            // 强制打开调试工具，方便排查白屏原因
+            // 保持开启调试工具，直到你确认白屏问题完全解决
             win.webContents.openDevTools();
           }
 
@@ -76,9 +75,10 @@ jobs:
           "@
           $content | Out-File -FilePath electron-main.cjs -Encoding utf8
 
+      # 3. 更新 package.json (关键修复：显式添加 "files" 配置，确保 dist 被打包)
       - name: Update package.json for Electron
         run: |
-          node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.main = 'electron-main.cjs'; pkg.build = {appId: 'com.designexplorer.app', productName: 'Design Explorer', win: {target: 'nsis', icon: 'public/icon.ico'}}; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+          node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.main = 'electron-main.cjs'; pkg.build = {appId: 'com.designexplorer.app', productName: 'Design Explorer', files: ['dist/**/*', 'electron-main.cjs', 'package.json'], win: {target: 'nsis', icon: 'public/icon.ico'}}; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
 
       - name: Build Windows executable
         run: npx electron-builder --win --x64
