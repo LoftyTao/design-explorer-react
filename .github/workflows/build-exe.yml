@@ -27,8 +27,7 @@ jobs:
         run: npm ci
 
       # ----------------------------------------------------------------
-      # 新增功能：同步版本号 (Git Tag -> package.json)
-      # 解决安装包一直是 0.0.0 的问题
+      # 1. 同步版本号 (Git Tag -> package.json)
       # ----------------------------------------------------------------
       - name: Sync Version from Tag
         if: startsWith(github.ref, 'refs/tags/')
@@ -38,7 +37,6 @@ jobs:
           node -e "
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          // 去掉 tag 前面的 'v' (例如 v1.0.1 -> 1.0.1)
           const version = process.env.TAG_NAME.replace(/^v/, '');
           pkg.version = version;
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
@@ -46,8 +44,7 @@ jobs:
           "
 
       # ----------------------------------------------------------------
-      # 终极修复：激进的路径修正 (Pre-build Patch)
-      # 此次不仅扫描 src/public，而且不再依赖引号匹配，直接替换字符串
+      # 2. 激进路径修正 (修复资源加载 404 问题)
       # ----------------------------------------------------------------
       - name: Aggressive Path Patching
         run: |
@@ -55,7 +52,6 @@ jobs:
           const fs = require('fs');
           const path = require('path');
 
-          // 需要替换的文件夹列表（基于你的报错日志）
           const targets = [
             '/Multiple -Image-Layouts',
             '/daylight-factor',
@@ -72,7 +68,6 @@ jobs:
               if (stat && stat.isDirectory()) {
                 results = results.concat(walk(file));
               } else {
-                // 扫描所有文本类源码文件
                 if (file.match(/\.(js|jsx|ts|tsx|json|css|html)$/)) {
                   results.push(file);
                 }
@@ -81,7 +76,6 @@ jobs:
             return results;
           }
 
-          // 扫描 src 和 public
           const allFiles = [...walk('src'), ...walk('public')];
           let patchCount = 0;
 
@@ -90,11 +84,7 @@ jobs:
             let original = content;
             
             targets.forEach(tgt => {
-              // 构造相对路径：将 "/Folder" 替换为 "./Folder"
               const replacement = '.' + tgt;
-              
-              // 使用 split/join 进行全局文本替换
-              // 这比正则更暴力，但也更有效，防止因引号类型不同而漏掉
               if (content.includes(tgt)) {
                  content = content.split(tgt).join(replacement);
               }
@@ -106,7 +96,6 @@ jobs:
               patchCount++;
             }
           });
-          
           console.log(`Total files patched: ${patchCount}`);
           '@
           
@@ -114,7 +103,7 @@ jobs:
           node patch-source.cjs
 
       # ----------------------------------------------------------------
-      # 配置 Vite 相对路径构建
+      # 3. 配置 Vite 相对路径
       # ----------------------------------------------------------------
       - name: Configure Vite Base Path
         run: |
@@ -132,7 +121,6 @@ jobs:
                pkg.scripts.build = 'vite build --base=./';
              }
            }
-           
            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
            "
 
@@ -144,7 +132,7 @@ jobs:
           npm install --save-dev electron electron-builder
 
       # ----------------------------------------------------------------
-      # 生成 Electron 主进程
+      # 4. 生成 Electron 主进程
       # ----------------------------------------------------------------
       - name: Create Electron main process file
         run: |
@@ -164,7 +152,6 @@ jobs:
             });
             
             win.loadFile(path.join(__dirname, 'dist', 'index.html'));
-            // 依然保持 DevTools 开启，方便最后一次确认
             win.webContents.openDevTools();
           }
 
@@ -181,13 +168,12 @@ jobs:
           $content | Out-File -FilePath electron-main.cjs -Encoding utf8
 
       # ----------------------------------------------------------------
-      # 关键更新：配置 NSIS 安装界面 和 文件名
-      # 1. nsis 配置：关闭 oneClick，开启路径选择
-      # 2. artifactName: 自定义生成的 exe 文件名格式
+      # 5. [关键修复] 配置安装包 (NSIS & ArtifactName)
+      # 改用生成文件的方式执行，彻底解决 PowerShell 转义报错
       # ----------------------------------------------------------------
       - name: Update package.json for Electron Config
         run: |
-          node -e "
+          $script = @'
           const fs = require('fs'); 
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); 
           
@@ -196,25 +182,26 @@ jobs:
           pkg.build = {
             appId: 'com.designexplorer.app', 
             productName: 'Design Explorer',
-            // 确保资源被打包
             files: ['dist/**/*', 'electron-main.cjs', 'package.json'],
-            // 自定义文件名格式
-            artifactName: '\${productName}-Setup-\${version}.\${ext}',
+            // 下面这行字符串中的 ${} 将被原样保留，供 Electron Builder 使用
+            artifactName: '${productName}-Setup-${version}.${ext}',
             win: {
               target: 'nsis', 
               icon: 'public/icon.ico'
             },
-            // NSIS 安装向导配置
             nsis: {
-              oneClick: false,                         // 关闭一键安装
-              allowToChangeInstallationDirectory: true,// 允许用户选择安装路径
-              createDesktopShortcut: true,             // 创建桌面图标
-              perMachine: false                        // 默认安装给当前用户
+              oneClick: false,
+              allowToChangeInstallationDirectory: true,
+              createDesktopShortcut: true,
+              perMachine: false
             }
           }; 
           
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          "
+          '@
+
+          $script | Out-File -FilePath update-config.cjs -Encoding utf8
+          node update-config.cjs
 
       - name: Build Windows executable
         run: npx electron-builder --win --x64
@@ -232,7 +219,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          # 注意：这里的通配符会匹配到新的文件名
           files: dist/*.exe
           draft: false
           prerelease: false
