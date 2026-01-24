@@ -30,34 +30,37 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
-      # 关键修改：显式指定 shell 为 cmd，以支持 @echo 和 ^> 语法
+      # 修正部分：使用 PowerShell Here-String 生成文件
+      # 这种写法不需要使用 @echo，也不需要对 > 或 {} 进行转义，完全避免了语法冲突
       - name: Create Electron main process file
-        shell: cmd
         run: |
-          @echo const { app, BrowserWindow } = require('electron'); > electron-main.js
-          @echo const path = require('path'); >> electron-main.js
-          @echo. >> electron-main.js
-          @echo function createWindow() { >> electron-main.js
-          @echo   const win = new BrowserWindow({ >> electron-main.js
-          @echo     width: 1400, >> electron-main.js
-          @echo     height: 900, >> electron-main.js
-          @echo     webPreferences: { >> electron-main.js
-          @echo       nodeIntegration: false, >> electron-main.js
-          @echo       contextIsolation: true >> electron-main.js
-          @echo     } >> electron-main.js
-          @echo   }); >> electron-main.js
-          @echo   win.loadFile('dist/index.html'); >> electron-main.js
-          @echo } >> electron-main.js
-          @echo. >> electron-main.js
-          @echo app.whenReady().then(createWindow); >> electron-main.js
-          @echo. >> electron-main.js
-          @echo app.on('window-all-closed', () =^> { >> electron-main.js
-          @echo   if (process.platform !== 'darwin') app.quit(); >> electron-main.js
-          @echo }); >> electron-main.js
-          @echo. >> electron-main.js
-          @echo app.on('activate', () =^> { >> electron-main.js
-          @echo   if (BrowserWindow.getAllWindows().length === 0) createWindow(); >> electron-main.js
-          @echo }); >> electron-main.js
+          $content = @"
+          const { app, BrowserWindow } = require('electron');
+          const path = require('path');
+
+          function createWindow() {
+            const win = new BrowserWindow({
+              width: 1400,
+              height: 900,
+              webPreferences: {
+                nodeIntegration: false,
+                contextIsolation: true
+              }
+            });
+            win.loadFile('dist/index.html');
+          }
+
+          app.whenReady().then(createWindow);
+
+          app.on('window-all-closed', () => {
+            if (process.platform !== 'darwin') app.quit();
+          });
+
+          app.on('activate', () => {
+            if (BrowserWindow.getAllWindows().length === 0) createWindow();
+          });
+          "@
+          $content | Out-File -FilePath electron-main.js -Encoding utf8
 
       - name: Update package.json for Electron
         run: |
