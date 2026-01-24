@@ -25,7 +25,12 @@ export function useSelection(sortedData) {
   const toggleRowSelection = (id) => {
     setGalleryActiveId(id);
     setGalleryActiveIdKey(prev => prev + 1);
-    setSelectedIds(new Set([id]));
+    
+    if (selectedIds.has(id) && selectedIds.size === 1) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set([id]));
+    }
   };
 
   const clearSelection = () => setSelectedIds(new Set());

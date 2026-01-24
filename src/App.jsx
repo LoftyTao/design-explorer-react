@@ -74,10 +74,21 @@ export default function App() {
       const index = sortedData.findIndex(d => d.id === galleryActiveId);
       if (index !== -1) {
         const newPage = Math.ceil((index + 1) / itemsPerPage);
-        console.log('跳转信息:', { galleryActiveId, index, newPage, totalItems: sortedData.length });
+        console.log('表格跳转信息:', { galleryActiveId, index, newPage, totalItems: sortedData.length });
         setTablePage(newPage);
       } else {
         console.log('未找到对应的 ID:', galleryActiveId);
+      }
+    }
+  }, [galleryActiveIdKey, galleryActiveId, sortedData, itemsPerPage]);
+
+  useEffect(() => {
+    if (galleryActiveId && sortedData.length > 0) {
+      const index = sortedData.findIndex(d => d.id === galleryActiveId);
+      if (index !== -1) {
+        const newPage = Math.ceil((index + 1) / itemsPerPage);
+        console.log('画廊跳转信息:', { galleryActiveId, index, newPage, totalItems: sortedData.length });
+        setGalleryPage(newPage);
       }
     }
   }, [galleryActiveIdKey, galleryActiveId, sortedData, itemsPerPage]);
