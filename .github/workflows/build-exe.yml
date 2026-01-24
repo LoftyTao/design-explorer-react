@@ -26,25 +26,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ----------------------------------------------------------------
-      # 核心修复 1：源码级路径修正 (Pre-build Patch)
-      # 在构建之前，直接修改 src 文件夹下的 React 代码
-      # 将绝对路径 fetch('/Multiple...') 替换为相对路径 fetch('./Multiple...')
-      # ----------------------------------------------------------------
       - name: Patch Source Code for Electron
         run: |
-          node -e "
+          $script = @'
           const fs = require('fs');
           const path = require('path');
 
-          // 定义需要修正的特定路径关键字（来自你的报错日志）
           const targets = [
             { from: '/Multiple -Image-Layouts', to: './Multiple -Image-Layouts' },
             { from: '/daylight-factor', to: './daylight-factor' },
             { from: '/box-without-img', to: './box-without-img' }
           ];
 
-          // 递归遍历 src 目录
           function walk(dir) {
             let results = [];
             const list = fs.readdirSync(dir);
@@ -54,7 +47,6 @@ jobs:
               if (stat && stat.isDirectory()) {
                 results = results.concat(walk(file));
               } else {
-                // 扫描 .ts, .tsx, .js, .jsx, .json 文件
                 if (file.match(/\.(js|jsx|ts|tsx|json)$/)) {
                   results.push(file);
                 }
@@ -71,41 +63,32 @@ jobs:
             let original = content;
             
             targets.forEach(tgt => {
-              // 针对 单引号、双引号、反引号 三种情况进行替换
-              // 使用 split/join 进行全局替换，比正则更安全（避免转义问题）
-              content = content.split(\`'\${tgt.from}\`).join(\`'\${tgt.to}\`);
-              content = content.split(\`\"\${tgt.from}\`).join(\`\"\${tgt.to}\`);
-              content = content.split(\`\`\`\${tgt.from}\`\`).join(\`\`\`\${tgt.to}\`\`);
+              content = content.split(`'${tgt.from}`).join(`'${tgt.to}`);
+              content = content.split(`"${tgt.from}`).join(`"${tgt.to}`);
+              content = content.split(`\`${tgt.from}`).join(`\`${tgt.to}`);
             });
 
             if (content !== original) {
               fs.writeFileSync(file, content);
-              console.log(\`Patched: \${file}\`);
+              console.log(`Patched: ${file}`);
               patchCount++;
             }
           });
           
-          console.log(\`Total files patched: \${patchCount}\`);
-          "
+          console.log(`Total files patched: ${patchCount}`);
+          '@
+          
+          $script | Out-File -FilePath patch-source.js -Encoding utf8
+          node patch-source.js
 
-      # ----------------------------------------------------------------
-      # 核心修复 2：配置 Vite Base
-      # 强制修改 package.json 中的 build 命令，添加 --base=./
-      # 这解决了 index.html 中 script 和 css 标签的引用问题
-      # ----------------------------------------------------------------
       - name: Configure Vite Base Path
         run: |
            node -e "
            const fs = require('fs');
            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-           
-           // 设置 homepage
            pkg.homepage = '.';
-           
-           // 修改 build 命令，注入 base 参数
            if (pkg.scripts && pkg.scripts.build) {
              if (pkg.scripts.build.includes('vite build')) {
-                // 防止重复添加
                 if (!pkg.scripts.build.includes('--base')) {
                    pkg.scripts.build = pkg.scripts.build.replace('vite build', 'vite build --base=./');
                 }
@@ -113,7 +96,6 @@ jobs:
                pkg.scripts.build = 'vite build --base=./';
              }
            }
-           
            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
            console.log('Updated build script to:', pkg.scripts.build);
            "
@@ -125,10 +107,6 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
-      # ----------------------------------------------------------------
-      # 核心修复 3：Electron 主进程配置
-      # 保持使用 path.join(__dirname) 和开启 DevTools
-      # ----------------------------------------------------------------
       - name: Create Electron main process file
         run: |
           $content = @"
@@ -142,14 +120,11 @@ jobs:
               webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
-                webSecurity: false // 允许加载本地资源
+                webSecurity: false
               }
             });
             
-            // 生产环境：加载打包后的 index.html
             win.loadFile(path.join(__dirname, 'dist', 'index.html'));
-
-            // 保持开启 DevTools，直到确认无误
             win.webContents.openDevTools();
           }
 
