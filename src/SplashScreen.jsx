@@ -96,7 +96,7 @@ const SplashScreen = ({ visible, onAnimationComplete }) => {
 
     const timer = setTimeout(() => {
         if (onAnimationComplete) onAnimationComplete();
-    }, 3500);
+    }, 550);
 
     return () => {
       window.removeEventListener('resize', handleResize);

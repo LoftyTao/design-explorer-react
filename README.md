@@ -153,6 +153,8 @@ git push origin v1.0.0
 - **Built-in Datasets**: Select from pre-loaded sample datasets
 - **Upload**: Upload your own CSV or ZIP files containing a `data.csv` file
 
+> **Tip**: Use [Pollination Fly](https://docs.pollination.solutions/user-manual/grasshopper-plugin/grasshopper-user-interface/3_parametric/fly) and [Fly_ID](https://docs.pollination.solutions/user-manual/grasshopper-plugin/grasshopper-user-interface/3_parametric/fly_id) components to create associated files that meet the program requirements, then package them into a ZIP file yourself. [View Tutorial](https://www.youtube.com/watch?v=X7hrUg71scE&t=28s)
+
 ### CSV Format
 
 CSV files should follow this format:
@@ -165,6 +167,8 @@ in:parameter1,in:parameter2,out:result1,out:result2,img:image_path
 - `in:` prefix for input parameters
 - `out:` prefix for output results
 - `img:` prefix for image paths
+
+**Note**: Non-numeric columns (containing text or other non-numeric values) are automatically filtered out and will not be displayed in the parallel coordinates plot. Only numeric columns will be visualized.
 
 ### Filtering and Sorting
 
