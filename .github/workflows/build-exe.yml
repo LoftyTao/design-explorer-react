@@ -30,8 +30,6 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
-      # 修正部分：使用 PowerShell Here-String 生成文件
-      # 这种写法不需要使用 @echo，也不需要对 > 或 {} 进行转义，完全避免了语法冲突
       - name: Create Electron main process file
         run: |
           $content = @"
