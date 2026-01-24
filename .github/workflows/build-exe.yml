@@ -26,10 +26,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ----------------------------------------------------------------
-      # 步骤 1：配置 Vite 使用相对路径
-      # 虽然我们使用了自定义协议，但相对路径依然是最佳实践
-      # ----------------------------------------------------------------
       - name: Configure Vite Base
         run: |
           $script = @'
@@ -54,17 +50,13 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
-      # ----------------------------------------------------------------
-      # 步骤 2：[核心架构修复] 创建带有自定义协议拦截的主进程
-      # ----------------------------------------------------------------
-      - name: Create Electron main process file (Custom Protocol)
+      - name: Create Electron main process file
         run: |
           $content = @"
           const { app, BrowserWindow, protocol, net } = require('electron');
           const path = require('path');
           const { pathToFileURL } = require('url');
 
-          // 1. 注册自定义协议 'app' 为特权协议 (支持 Fetch API, 绕过 CORS)
           protocol.registerSchemesAsPrivileged([
             { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true } }
           ]);
@@ -76,38 +68,23 @@ jobs:
               webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
-                webSecurity: false // 允许加载本地资源
+                webSecurity: false
               }
             });
             
-            // 2. 加载自定义协议地址，而不是 file://
-            // 这会让 React 认为它运行在 app://design-explorer/ 下
-            // 所有的绝对路径请求 /data.csv 都会变成 app://design-explorer/data.csv
             win.loadURL('app://design-explorer/index.html');
-
-            // 开启调试工具 (确认没问题后可注释掉)
-            win.webContents.openDevTools();
           }
 
           app.whenReady().then(() => {
-            // 3. [关键拦截] 处理 app:// 请求
             protocol.handle('app', (request) => {
-              // 获取请求的路径 (例如 /index.html 或 /Multiple.../data.csv)
               const url = new URL(request.url);
               let pathname = url.pathname;
               
-              // Windows 下 pathname 可能会带上盘符问题，做一下清理
               if (pathname.startsWith('/')) {
                 pathname = pathname.slice(1);
               }
               
-              // 4. 将请求映射到 dist 目录
-              // 无论前端请求什么，我们都去 __dirname/dist/ 下面找
               const filePath = path.join(__dirname, 'dist', decodeURIComponent(pathname));
-              
-              console.log('Serving:', request.url, '->', filePath);
-              
-              // 返回文件
               return net.fetch(pathToFileURL(filePath).toString());
             });
 
@@ -120,10 +97,7 @@ jobs:
           "@
           $content | Out-File -FilePath electron-main.cjs -Encoding utf8
 
-      # ----------------------------------------------------------------
-      # 步骤 3：配置 package.json (版本号 + NSIS安装向导 + 文件名)
-      # ----------------------------------------------------------------
-      - name: Configure Package.json (Version, NSIS, ArtifactName)
+      - name: Configure Package.json
         if: startsWith(github.ref, 'refs/tags/')
         env:
           TAG_NAME: ${{ github.ref_name }}
@@ -132,47 +106,34 @@ jobs:
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           
-          // 1. 从 Tag 提取版本号 (v1.0.1 -> 1.0.1)
           const version = process.env.TAG_NAME.replace(/^v/, '');
           pkg.version = version;
           pkg.main = 'electron-main.cjs';
           
-          // 2. 配置 Electron Builder
           pkg.build = {
             appId: 'com.designexplorer.app',
             productName: 'Design Explorer',
-            // 确保打包 dist 目录和 main js
             files: ['dist/**/*', 'electron-main.cjs', 'package.json'],
-            
-            // [需求解决] 自定义安装包文件名：Design Explorer-Setup-1.0.1.exe
-            // 注意：这里使用 ${} 是 Electron Builder 的变量，不是 JS 变量
             artifactName: '${productName}-Setup-${version}.${ext}',
-            
             win: {
               target: 'nsis',
               icon: 'public/icon.ico'
             },
-            
-            // [需求解决] NSIS 安装向导配置
             nsis: {
-              oneClick: false,                          // 关闭一键安装，显示向导
-              allowToChangeInstallationDirectory: true, // 允许用户修改安装路径
+              oneClick: false,
+              allowToChangeInstallationDirectory: true,
               createDesktopShortcut: true,
-              perMachine: false,                        // 默认安装给当前用户
-              runAfterFinish: true                      // 安装完成后允许立即运行
+              perMachine: false,
+              runAfterFinish: true
             }
           };
           
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          console.log('Package.json updated. Version:', version);
           '@
           
           $script | Out-File -FilePath update-config.cjs -Encoding utf8
           node update-config.cjs
 
-      # ----------------------------------------------------------------
-      # 步骤 4：打包与发布
-      # ----------------------------------------------------------------
       - name: Build Windows executable
         run: npx electron-builder --win --x64
         env:
