@@ -30,8 +30,8 @@ A powerful web-based tool for visualizing and exploring design data through inte
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/design-explorer-next.git
-cd design-explorer-next
+git clone https://github.com/LoftyTao/design-explorer-react.git
+cd design-explorer-react
 ```
 
 2. Install dependencies:
