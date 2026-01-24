@@ -27,7 +27,8 @@ jobs:
         run: npm ci
 
       # ----------------------------------------------------------------
-      # 1. 设置 Vite 基础路径 (防止 index.html 引用错误)
+      # 步骤 1：配置 Vite 使用相对路径
+      # 虽然我们使用了自定义协议，但相对路径依然是最佳实践
       # ----------------------------------------------------------------
       - name: Configure Vite Base
         run: |
@@ -36,10 +37,8 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           pkg.homepage = '.';
           
-          // 强制 build 命令使用相对路径
           if (pkg.scripts && pkg.scripts.build) {
              if (!pkg.scripts.build.includes('--base')) {
-                // 简单的字符串追加，比正则更稳健
                 pkg.scripts.build += ' --base=./';
              }
           }
@@ -48,100 +47,27 @@ jobs:
           $script | Out-File -FilePath config-vite.cjs -Encoding utf8
           node config-vite.cjs
 
-      # ----------------------------------------------------------------
-      # 2. 执行构建 (生成 dist 目录)
-      # ----------------------------------------------------------------
       - name: Build for production
         run: npm run build
 
-      # ----------------------------------------------------------------
-      # 3. [核心修复] 暴力修补构建产物 (Patch Dist)
-      # 构建完成后，直接修改 dist/assets 下的 JS 文件
-      # 解决 "/D:/Multiple..." 这种路径错误
-      # ----------------------------------------------------------------
-      - name: Patch Built Javascript Files
-        run: |
-          $script = @'
-          const fs = require('fs');
-          const path = require('path');
-
-          // 定义需要修复的路径关键词
-          const targets = [
-            '/Multiple -Image-Layouts',
-            '/daylight-factor',
-            '/box-without-img'
-          ];
-
-          function walk(dir) {
-            let results = [];
-            if (!fs.existsSync(dir)) return results;
-            const list = fs.readdirSync(dir);
-            list.forEach(function(file) {
-              file = path.join(dir, file);
-              const stat = fs.statSync(file);
-              if (stat && stat.isDirectory()) {
-                results = results.concat(walk(file));
-              } else {
-                if (file.endsWith('.js')) {
-                  results.push(file);
-                }
-              }
-            });
-            return results;
-          }
-
-          // 扫描 dist/assets 目录
-          const distFiles = walk(path.join('dist', 'assets'));
-          let patchCount = 0;
-
-          distFiles.forEach(file => {
-            let content = fs.readFileSync(file, 'utf8');
-            let original = content;
-            
-            targets.forEach(tgt => {
-              // 替换逻辑：将所有 "/FolderName" 替换为 "./FolderName"
-              // 这种全局替换不依赖引号类型，非常彻底
-              // 注意：我们会检查前面是否已经是 . 了，防止重复替换
-              
-              // 1. 简单替换： "/Multiple -> "./Multiple
-              // 我们先通过 split/join 替换所有出现的绝对路径引用
-              if (content.includes(tgt)) {
-                 // 这是一个比较安全的替换策略，针对 web 路径引用
-                 content = content.split(tgt).join('.' + tgt);
-                 
-                 // 修正可能产生的双点错误 (比如源代码里已经是 ./ 了，结果变成了 ..//)
-                 content = content.split('..' + tgt).join('.' + tgt);
-              }
-            });
-
-            if (content !== original) {
-              fs.writeFileSync(file, content);
-              console.log(`[Fixed] Paths in: ${file}`);
-              patchCount++;
-            }
-          });
-          
-          console.log(`Total built files patched: ${patchCount}`);
-          '@
-          
-          $script | Out-File -FilePath patch-dist.cjs -Encoding utf8
-          node patch-dist.cjs
-
-      # ----------------------------------------------------------------
-      # 4. 安装 Electron 相关依赖
-      # ----------------------------------------------------------------
-      - name: Install Electron and Electron Builder
+      - name: Install Electron dependencies
         run: |
           npm install --save-dev electron electron-builder
 
       # ----------------------------------------------------------------
-      # 5. 生成 Electron 主进程文件
+      # 步骤 2：[核心架构修复] 创建带有自定义协议拦截的主进程
       # ----------------------------------------------------------------
-      - name: Create Electron main process file
+      - name: Create Electron main process file (Custom Protocol)
         run: |
           $content = @"
-          const { app, BrowserWindow } = require('electron');
+          const { app, BrowserWindow, protocol, net } = require('electron');
           const path = require('path');
+          const { pathToFileURL } = require('url');
+
+          // 1. 注册自定义协议 'app' 为特权协议 (支持 Fetch API, 绕过 CORS)
+          protocol.registerSchemesAsPrivileged([
+            { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true } }
+          ]);
 
           function createWindow() {
             const win = new BrowserWindow({
@@ -150,33 +76,54 @@ jobs:
               webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
-                webSecurity: false // 允许加载本地文件
+                webSecurity: false // 允许加载本地资源
               }
             });
             
-            // 使用绝对路径加载
-            win.loadFile(path.join(__dirname, 'dist', 'index.html'));
-            
-            // 保持开启调试工具，如果这次成功了，下次你可以把这行删掉
+            // 2. 加载自定义协议地址，而不是 file://
+            // 这会让 React 认为它运行在 app://design-explorer/ 下
+            // 所有的绝对路径请求 /data.csv 都会变成 app://design-explorer/data.csv
+            win.loadURL('app://design-explorer/index.html');
+
+            // 开启调试工具 (确认没问题后可注释掉)
             win.webContents.openDevTools();
           }
 
-          app.whenReady().then(createWindow);
+          app.whenReady().then(() => {
+            // 3. [关键拦截] 处理 app:// 请求
+            protocol.handle('app', (request) => {
+              // 获取请求的路径 (例如 /index.html 或 /Multiple.../data.csv)
+              const url = new URL(request.url);
+              let pathname = url.pathname;
+              
+              // Windows 下 pathname 可能会带上盘符问题，做一下清理
+              if (pathname.startsWith('/')) {
+                pathname = pathname.slice(1);
+              }
+              
+              // 4. 将请求映射到 dist 目录
+              // 无论前端请求什么，我们都去 __dirname/dist/ 下面找
+              const filePath = path.join(__dirname, 'dist', decodeURIComponent(pathname));
+              
+              console.log('Serving:', request.url, '->', filePath);
+              
+              // 返回文件
+              return net.fetch(pathToFileURL(filePath).toString());
+            });
+
+            createWindow();
+          });
 
           app.on('window-all-closed', () => {
             if (process.platform !== 'darwin') app.quit();
-          });
-
-          app.on('activate', () => {
-            if (BrowserWindow.getAllWindows().length === 0) createWindow();
           });
           "@
           $content | Out-File -FilePath electron-main.cjs -Encoding utf8
 
       # ----------------------------------------------------------------
-      # 6. 配置 package.json (版本号 + 安装向导 + 文件名)
+      # 步骤 3：配置 package.json (版本号 + NSIS安装向导 + 文件名)
       # ----------------------------------------------------------------
-      - name: Configure Package.json and Build Settings
+      - name: Configure Package.json (Version, NSIS, ArtifactName)
         if: startsWith(github.ref, 'refs/tags/')
         env:
           TAG_NAME: ${{ github.ref_name }}
@@ -185,51 +132,52 @@ jobs:
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           
-          // 1. 设置版本号 (去 v)
+          // 1. 从 Tag 提取版本号 (v1.0.1 -> 1.0.1)
           const version = process.env.TAG_NAME.replace(/^v/, '');
           pkg.version = version;
-          
-          // 2. 设置入口
           pkg.main = 'electron-main.cjs';
           
-          // 3. 配置 Electron Builder
-          // 注意：这里使用纯字符串拼接，避免 Shell 的变量干扰
+          // 2. 配置 Electron Builder
           pkg.build = {
             appId: 'com.designexplorer.app',
             productName: 'Design Explorer',
+            // 确保打包 dist 目录和 main js
             files: ['dist/**/*', 'electron-main.cjs', 'package.json'],
-            // 使用 Electron Builder 的标准宏 ${productName}
+            
+            // [需求解决] 自定义安装包文件名：Design Explorer-Setup-1.0.1.exe
+            // 注意：这里使用 ${} 是 Electron Builder 的变量，不是 JS 变量
             artifactName: '${productName}-Setup-${version}.${ext}',
+            
             win: {
               target: 'nsis',
               icon: 'public/icon.ico'
             },
+            
+            // [需求解决] NSIS 安装向导配置
             nsis: {
-              oneClick: false,                          // 显示安装向导
-              allowToChangeInstallationDirectory: true, // 允许修改路径
+              oneClick: false,                          // 关闭一键安装，显示向导
+              allowToChangeInstallationDirectory: true, // 允许用户修改安装路径
               createDesktopShortcut: true,
-              perMachine: false
+              perMachine: false,                        // 默认安装给当前用户
+              runAfterFinish: true                      // 安装完成后允许立即运行
             }
           };
           
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          console.log('Package.json updated with version:', version);
+          console.log('Package.json updated. Version:', version);
           '@
           
           $script | Out-File -FilePath update-config.cjs -Encoding utf8
           node update-config.cjs
 
       # ----------------------------------------------------------------
-      # 7. 打包 Windows Exe
+      # 步骤 4：打包与发布
       # ----------------------------------------------------------------
       - name: Build Windows executable
         run: npx electron-builder --win --x64
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ----------------------------------------------------------------
-      # 8. 上传产物
-      # ----------------------------------------------------------------
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
