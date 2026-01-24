@@ -27,22 +27,29 @@ jobs:
         run: npm ci
 
       # ----------------------------------------------------------------
-      # 修复步骤 1：源码路径修正 (针对 fetch 绝对路径)
-      # [关键修改] 输出文件名为 patch-source.cjs，解决 "type": "module" 冲突
+      # 终极修复 1：全域路径修正 (Pre-build Patch)
+      # [升级点] 1. 同时扫描 src 和 public 目录 (防止漏掉 json 配置文件)
+      # [升级点] 2. 使用正则表达式替换，无视引号差异
       # ----------------------------------------------------------------
-      - name: Patch Source Code for Electron
+      - name: Patch Source & Public Code for Electron
         run: |
           $script = @'
           const fs = require('fs');
           const path = require('path');
 
-          // 定义需要替换的路径映射
-          const targets = [
-            { from: '/Multiple -Image-Layouts', to: './Multiple -Image-Layouts' },
-            { from: '/daylight-factor', to: './daylight-factor' },
-            { from: '/box-without-img', to: './box-without-img' }
+          // 定义需要替换的文件夹关键词
+          const keywords = [
+            'Multiple -Image-Layouts',
+            'daylight-factor',
+            'box-without-img'
           ];
 
+          // 构造正则：匹配以 / 开头，后面跟着关键词的路径
+          // 捕获组 $1: 引号 (" or ' or `)
+          // 捕获组 $2: 文件夹名
+          const regex = new RegExp(`(["'\`])\/(${keywords.join('|')})`, 'g');
+
+          // 递归遍历函数
           function walk(dir) {
             let results = [];
             if (!fs.existsSync(dir)) return results;
@@ -53,7 +60,7 @@ jobs:
               if (stat && stat.isDirectory()) {
                 results = results.concat(walk(file));
               } else {
-                // 扫描常见的源码文件
+                // 扫描 js, ts, jsx, tsx 和 json 文件
                 if (file.match(/\.(js|jsx|ts|tsx|json)$/)) {
                   results.push(file);
                 }
@@ -62,23 +69,24 @@ jobs:
             return results;
           }
 
-          const files = walk('src');
+          // [关键] 同时扫描 src 和 public 文件夹
+          const srcFiles = walk('src');
+          const publicFiles = walk('public');
+          const allFiles = [...srcFiles, ...publicFiles];
+
           let patchCount = 0;
 
-          files.forEach(file => {
+          allFiles.forEach(file => {
             let content = fs.readFileSync(file, 'utf8');
             let original = content;
             
-            targets.forEach(tgt => {
-              // 替换三种引号情况
-              content = content.split(`'${tgt.from}`).join(`'${tgt.to}`);
-              content = content.split(`"${tgt.from}`).join(`"${tgt.to}`);
-              content = content.split(`\`${tgt.from}`).join(`\`${tgt.to}`);
-            });
+            // 执行正则替换：将 "/FolderName" 替换为 "./FolderName"
+            // $1 保留原来的引号，./$2 添加相对路径前缀
+            content = content.replace(regex, '$1./$2');
 
             if (content !== original) {
               fs.writeFileSync(file, content);
-              console.log(`Patched: ${file}`);
+              console.log(`[Patched] ${file}`);
               patchCount++;
             }
           });
@@ -86,13 +94,11 @@ jobs:
           console.log(`Total files patched: ${patchCount}`);
           '@
           
-          # 写入 .cjs 文件并执行
           $script | Out-File -FilePath patch-source.cjs -Encoding utf8
           node patch-source.cjs
 
       # ----------------------------------------------------------------
       # 修复步骤 2：配置 Vite 相对路径
-      # 修改 package.json 的 build 命令，注入 --base=./
       # ----------------------------------------------------------------
       - name: Configure Vite Base Path
         run: |
@@ -101,9 +107,7 @@ jobs:
            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
            pkg.homepage = '.';
            
-           // 检查并修改 build 脚本
            if (pkg.scripts && pkg.scripts.build) {
-             // 只要是 vite build，就确保它有 --base=./
              if (pkg.scripts.build.includes('vite build')) {
                 if (!pkg.scripts.build.includes('--base')) {
                    pkg.scripts.build = pkg.scripts.build.replace('vite build', 'vite build --base=./');
@@ -120,13 +124,20 @@ jobs:
       - name: Build for production
         run: npm run build
 
+      # ----------------------------------------------------------------
+      # 调试步骤：列出 dist 目录内容
+      # 这一步会打印出打包后的文件结构，证明 public 里的文件确实在里面
+      # ----------------------------------------------------------------
+      - name: List dist directory (Debug)
+        run: |
+          Get-ChildItem -Recurse dist | Select-Object FullName
+
       - name: Install Electron and Electron Builder
         run: |
           npm install --save-dev electron electron-builder
 
       # ----------------------------------------------------------------
       # 修复步骤 3：生成 Electron 主进程
-      # [关键修改] 文件名使用 .cjs，且使用 path.join(__dirname)
       # ----------------------------------------------------------------
       - name: Create Electron main process file
         run: |
@@ -141,14 +152,14 @@ jobs:
               webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
-                webSecurity: false // 允许本地文件访问
+                webSecurity: false
               }
             });
             
-            // 使用绝对路径加载构建好的 index.html
+            // 使用 path.join 确保路径解析正确
             win.loadFile(path.join(__dirname, 'dist', 'index.html'));
 
-            // 保持 DevTools 开启以便调试
+            // 保持 DevTools 开启
             win.webContents.openDevTools();
           }
 
@@ -165,7 +176,7 @@ jobs:
           $content | Out-File -FilePath electron-main.cjs -Encoding utf8
 
       # ----------------------------------------------------------------
-      # 修复步骤 4：更新 package.json 指向新的 .cjs入口
+      # 修复步骤 4：更新 package.json
       # ----------------------------------------------------------------
       - name: Update package.json for Electron
         run: |
@@ -193,3 +204,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: dist/*.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
