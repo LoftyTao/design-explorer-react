@@ -26,12 +26,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ----------------------------------------------------------------
+      # 修复步骤 1：源码路径修正 (针对 fetch 绝对路径)
+      # [关键修改] 输出文件名为 patch-source.cjs，解决 "type": "module" 冲突
+      # ----------------------------------------------------------------
       - name: Patch Source Code for Electron
         run: |
           $script = @'
           const fs = require('fs');
           const path = require('path');
 
+          // 定义需要替换的路径映射
           const targets = [
             { from: '/Multiple -Image-Layouts', to: './Multiple -Image-Layouts' },
             { from: '/daylight-factor', to: './daylight-factor' },
@@ -40,6 +45,7 @@ jobs:
 
           function walk(dir) {
             let results = [];
+            if (!fs.existsSync(dir)) return results;
             const list = fs.readdirSync(dir);
             list.forEach(function(file) {
               file = path.join(dir, file);
@@ -47,6 +53,7 @@ jobs:
               if (stat && stat.isDirectory()) {
                 results = results.concat(walk(file));
               } else {
+                // 扫描常见的源码文件
                 if (file.match(/\.(js|jsx|ts|tsx|json)$/)) {
                   results.push(file);
                 }
@@ -63,6 +70,7 @@ jobs:
             let original = content;
             
             targets.forEach(tgt => {
+              // 替换三种引号情况
               content = content.split(`'${tgt.from}`).join(`'${tgt.to}`);
               content = content.split(`"${tgt.from}`).join(`"${tgt.to}`);
               content = content.split(`\`${tgt.from}`).join(`\`${tgt.to}`);
@@ -78,16 +86,24 @@ jobs:
           console.log(`Total files patched: ${patchCount}`);
           '@
           
-          $script | Out-File -FilePath patch-source.js -Encoding utf8
-          node patch-source.js
+          # 写入 .cjs 文件并执行
+          $script | Out-File -FilePath patch-source.cjs -Encoding utf8
+          node patch-source.cjs
 
+      # ----------------------------------------------------------------
+      # 修复步骤 2：配置 Vite 相对路径
+      # 修改 package.json 的 build 命令，注入 --base=./
+      # ----------------------------------------------------------------
       - name: Configure Vite Base Path
         run: |
            node -e "
            const fs = require('fs');
            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
            pkg.homepage = '.';
+           
+           // 检查并修改 build 脚本
            if (pkg.scripts && pkg.scripts.build) {
+             // 只要是 vite build，就确保它有 --base=./
              if (pkg.scripts.build.includes('vite build')) {
                 if (!pkg.scripts.build.includes('--base')) {
                    pkg.scripts.build = pkg.scripts.build.replace('vite build', 'vite build --base=./');
@@ -96,6 +112,7 @@ jobs:
                pkg.scripts.build = 'vite build --base=./';
              }
            }
+           
            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
            console.log('Updated build script to:', pkg.scripts.build);
            "
@@ -107,6 +124,10 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
+      # ----------------------------------------------------------------
+      # 修复步骤 3：生成 Electron 主进程
+      # [关键修改] 文件名使用 .cjs，且使用 path.join(__dirname)
+      # ----------------------------------------------------------------
       - name: Create Electron main process file
         run: |
           $content = @"
@@ -120,11 +141,14 @@ jobs:
               webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
-                webSecurity: false
+                webSecurity: false // 允许本地文件访问
               }
             });
             
+            // 使用绝对路径加载构建好的 index.html
             win.loadFile(path.join(__dirname, 'dist', 'index.html'));
+
+            // 保持 DevTools 开启以便调试
             win.webContents.openDevTools();
           }
 
@@ -140,6 +164,9 @@ jobs:
           "@
           $content | Out-File -FilePath electron-main.cjs -Encoding utf8
 
+      # ----------------------------------------------------------------
+      # 修复步骤 4：更新 package.json 指向新的 .cjs入口
+      # ----------------------------------------------------------------
       - name: Update package.json for Electron
         run: |
           node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.main = 'electron-main.cjs'; pkg.build = {appId: 'com.designexplorer.app', productName: 'Design Explorer', files: ['dist/**/*', 'electron-main.cjs', 'package.json'], win: {target: 'nsis', icon: 'public/icon.ico'}}; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
@@ -166,7 +193,3 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: dist/*.exe
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
