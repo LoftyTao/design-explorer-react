@@ -26,6 +26,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # 核心修复步骤 1：在构建前设置 homepage 为 "."
+      # 这强制 React/Vite 使用相对路径引资源，解决白屏问题
+      - name: Set homepage for relative paths
+        run: |
+           node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.homepage = '.'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+
       - name: Build for production
         run: npm run build
 
@@ -33,6 +39,8 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
+      # 核心修复步骤 2：在生成的代码中加入 openDevTools()
+      # 这样程序启动时会自动打开控制台，你可以看到具体的报错信息（如 404 或 JS 错误）
       - name: Create Electron main process file
         run: |
           $content = @"
@@ -48,7 +56,12 @@ jobs:
                 contextIsolation: true
               }
             });
+            
+            // 生产环境加载文件
             win.loadFile('dist/index.html');
+
+            // 强制打开调试工具，方便排查白屏原因
+            win.webContents.openDevTools();
           }
 
           app.whenReady().then(createWindow);
