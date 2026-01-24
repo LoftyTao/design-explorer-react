@@ -1,4 +1,5 @@
 name: Build Windows Executable
+run-name: ${{ github.ref_name }}
 
 on:
   push:
@@ -53,7 +54,7 @@ jobs:
       - name: Create Electron main process file
         run: |
           $content = @"
-          const { app, BrowserWindow, protocol, net } = require('electron');
+          const { app, BrowserWindow, protocol, net, shell } = require('electron');
           const path = require('path');
           const { pathToFileURL } = require('url');
 
@@ -69,6 +70,21 @@ jobs:
                 nodeIntegration: false,
                 contextIsolation: true,
                 webSecurity: false
+              }
+            });
+            
+            win.webContents.setWindowOpenHandler(({ url }) => {
+              if (url.startsWith('https:') || url.startsWith('http:')) {
+                shell.openExternal(url);
+                return { action: 'deny' };
+              }
+              return { action: 'allow' };
+            });
+
+            win.webContents.on('will-navigate', (event, url) => {
+              if (url.startsWith('https:') || url.startsWith('http:')) {
+                event.preventDefault();
+                shell.openExternal(url);
               }
             });
             
