@@ -26,10 +26,35 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 1. 设置 homepage 为 "." (解决白屏的基础)
-      - name: Set homepage for relative paths
+      # 核心修复步骤：强制 Vite 使用相对路径构建
+      # 我们不仅设置 homepage，还通过脚本修改 package.json 中的 build 命令，追加 --base=./
+      - name: Configure relative paths for Vite/Electron
         run: |
-           node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.homepage = '.'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+           node -e "
+           const fs = require('fs');
+           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+           
+           // 1. 设置 homepage (针对 CRA 等工具的兼容性)
+           pkg.homepage = '.';
+           
+           // 2. 针对 Vite：强行在 build 命令中注入 base 参数
+           // 查找 scripts.build，如果包含 'vite build'，则替换为 'vite build --base=./'
+           if (pkg.scripts && pkg.scripts.build) {
+             console.log('Original build script:', pkg.scripts.build);
+             if (pkg.scripts.build.includes('vite build')) {
+               pkg.scripts.build = pkg.scripts.build.replace('vite build', 'vite build --base=./');
+             } else {
+               // 如果脚本比较复杂或者是别名，尝试直接追加，或者手动指定 vite
+               // 这里做一个兜底：如果只是 'vite'，也改为 'vite build --base=./'
+               if (pkg.scripts.build.trim() === 'vite') {
+                 pkg.scripts.build = 'vite build --base=./';
+               }
+             }
+             console.log('Modified build script:', pkg.scripts.build);
+           }
+           
+           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+           "
 
       - name: Build for production
         run: npm run build
@@ -38,7 +63,7 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
-      # 2. 生成主进程文件 (关键修复：使用 path.join(__dirname) 构建绝对路径)
+      # 生成 Electron 主进程文件 (保持之前的修复：使用绝对路径 path.join)
       - name: Create Electron main process file
         run: |
           $content = @"
@@ -51,15 +76,15 @@ jobs:
               height: 900,
               webPreferences: {
                 nodeIntegration: false,
-                contextIsolation: true
+                contextIsolation: true,
+                webSecurity: false // 可选：如果遇到跨域图片加载问题，临时关闭安全策略
               }
             });
             
-            // 修复点：使用 __dirname 拼接绝对路径，解决 'Not allowed to load local resource' 问题
-            // 这种写法兼容 ASAR 打包环境
+            // 使用 path.join 确保路径解析正确
             win.loadFile(path.join(__dirname, 'dist', 'index.html'));
 
-            // 保持开启调试工具，直到你确认白屏问题完全解决
+            // 保持开启调试工具，直到你看到画面正常显示
             win.webContents.openDevTools();
           }
 
@@ -75,7 +100,7 @@ jobs:
           "@
           $content | Out-File -FilePath electron-main.cjs -Encoding utf8
 
-      # 3. 更新 package.json (关键修复：显式添加 "files" 配置，确保 dist 被打包)
+      # 更新 package.json (保持之前的修复：包含 files 字段)
       - name: Update package.json for Electron
         run: |
           node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.main = 'electron-main.cjs'; pkg.build = {appId: 'com.designexplorer.app', productName: 'Design Explorer', files: ['dist/**/*', 'electron-main.cjs', 'package.json'], win: {target: 'nsis', icon: 'public/icon.ico'}}; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
