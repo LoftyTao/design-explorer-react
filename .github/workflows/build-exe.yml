@@ -1,0 +1,89 @@
+name: Build Windows Executable
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build for production
+        run: npm run build
+
+      - name: Install Electron and Electron Builder
+        run: |
+          npm install --save-dev electron electron-builder
+
+      - name: Create Electron main process file
+        run: |
+          @echo const { app, BrowserWindow } = require('electron'); > electron-main.js
+          @echo const path = require('path'); >> electron-main.js
+          @echo. >> electron-main.js
+          @echo function createWindow() { >> electron-main.js
+          @echo   const win = new BrowserWindow({ >> electron-main.js
+          @echo     width: 1400, >> electron-main.js
+          @echo     height: 900, >> electron-main.js
+          @echo     webPreferences: { >> electron-main.js
+          @echo       nodeIntegration: false, >> electron-main.js
+          @echo       contextIsolation: true >> electron-main.js
+          @echo     } >> electron-main.js
+          @echo   }); >> electron-main.js
+          @echo   win.loadFile('dist/index.html'); >> electron-main.js
+          @echo } >> electron-main.js
+          @echo. >> electron-main.js
+          @echo app.whenReady().then(createWindow); >> electron-main.js
+          @echo. >> electron-main.js
+          @echo app.on('window-all-closed', () =^> { >> electron-main.js
+          @echo   if (process.platform !== 'darwin') app.quit(); >> electron-main.js
+          @echo }); >> electron-main.js
+          @echo. >> electron-main.js
+          @echo app.on('activate', () =^> { >> electron-main.js
+          @echo   if (BrowserWindow.getAllWindows().length === 0) createWindow(); >> electron-main.js
+          @echo }); >> electron-main.js
+
+      - name: Update package.json for Electron
+        run: |
+          node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); pkg.main = 'electron-main.js'; pkg.build = {appId: 'com.designexplorer.app', productName: 'Design Explorer', win: {target: 'nsis', icon: 'public/icon.ico'}}; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));"
+
+      - name: Build Windows executable
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version from package.json
+        id: get_version
+        run: |
+          node -e "console.log('VERSION=' + require('./package.json').version)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: design-explorer-windows
+          path: dist/*.exe
+          retention-days: 30
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*.exe
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
