@@ -30,7 +30,9 @@ jobs:
         run: |
           npm install --save-dev electron electron-builder
 
+      # 关键修改：显式指定 shell 为 cmd，以支持 @echo 和 ^> 语法
       - name: Create Electron main process file
+        shell: cmd
         run: |
           @echo const { app, BrowserWindow } = require('electron'); > electron-main.js
           @echo const path = require('path'); >> electron-main.js
