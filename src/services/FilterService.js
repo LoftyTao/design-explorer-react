@@ -1,6 +1,11 @@
 export class FilterService {
   constructor() {
     this.filters = {};
+    this.stringColMaps = {};
+  }
+
+  setStringColMap(col, values) {
+    this.stringColMaps[col] = values;
   }
 
   addFilter(col, range) {
@@ -39,7 +44,19 @@ export class FilterService {
     return data.filter(row => {
       return Object.keys(this.filters).every(col => {
         const val = row[col];
-        return this.filters[col].some(range => val >= range.min && val <= range.max);
+        const values = this.stringColMaps[col];
+        
+        if (values && typeof val === 'string') {
+          const valIndex = values.indexOf(val);
+          if (valIndex === -1) return false;
+          return this.filters[col].some(range => valIndex >= range.min && valIndex <= range.max);
+        }
+        
+        if (typeof val === 'number') {
+          return this.filters[col].some(range => val >= range.min && val <= range.max);
+        }
+        
+        return true;
       });
     });
   }

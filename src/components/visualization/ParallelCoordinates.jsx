@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { BarChart3, Download, XCircle } from 'lucide-react';
-import { getColor, PALETTE_NAMES } from '../../utils/colorUtils';
+import { BarChart3, Download, XCircle, Type, GripVertical } from 'lucide-react';
+import { getColor, PALETTE_NAMES, getInputOutputColors } from '../../utils/colorUtils';
 import { cleanName } from '../../utils/constants';
 import { LegendBar } from '../ui/LegendBar';
 import { ExportService } from '../../services/ExportService';
 
 export const ParallelCoordinates = ({ 
-  data, filteredData, columns, numericCols, ranges, filters, selectedIds, 
-  colorBy, paletteName, legendPosition,
+  data, filteredData, columns, numericCols, stringCols, ranges, filters, selectedIds, 
+  colorBy, paletteName, legendPosition, showTextCols, setShowTextCols,
   onAddFilter, onRemoveFilter, onClearColumnFilter,
   setColorBy, setPaletteName, setLegendPosition,
   resetAllFilters, onExport
@@ -18,7 +18,16 @@ export const ParallelCoordinates = ({
   const [showExportMenu, setShowExportMenu] = useState(false);
   const chartHeight = Math.min(320, Math.max(200, containerWidth * 0.25));
   const padding = { top: 40, right: 40, bottom: 30, left: 40 };
-  const [brushing, setBrushing] = useState(null); 
+  const [brushing, setBrushing] = useState(null);
+
+  const stringColsList = stringCols || [];
+  const numericColsList = numericCols || [];
+  
+  const displayCols = showTextCols 
+    ? [...columns.in, ...columns.out].filter(col => 
+        numericColsList.includes(col) || stringColsList.includes(col)
+      )
+    : numericColsList; 
 
   useEffect(() => {
     if (chartContainerRef.current) {
@@ -34,12 +43,45 @@ export const ParallelCoordinates = ({
   const isLegendVertical = legendPosition === 'left' || legendPosition === 'right';
   const chartWidth = isLegendVertical ? containerWidth - legendThickness : containerWidth;
   const legendHeight = chartHeight + 40;
-  const allCols = numericCols || [...columns.in, ...columns.out];
+  const allCols = displayCols;
+
+  const ioColors = useMemo(() => getInputOutputColors(paletteName), [paletteName]);
 
   const selectedData = useMemo(() => {
     if (selectedIds.size === 0) return [];
     return data.filter(d => selectedIds.has(d.id));
   }, [data, selectedIds]);
+
+  const stringColMaps = useMemo(() => {
+    const maps = {};
+    stringColsList.forEach(col => {
+      const uniqueValues = [...new Set(data.map(row => row[col]))].filter(v => v !== undefined && v !== null);
+      maps[col] = {
+        values: uniqueValues,
+        positionMap: {}
+      };
+      uniqueValues.forEach((val, idx) => {
+        maps[col].positionMap[val] = idx / Math.max(1, uniqueValues.length - 1);
+      });
+      maps[col].min = 0;
+      maps[col].max = uniqueValues.length - 1;
+    });
+    return maps;
+  }, [data, stringColsList]);
+
+  const getStringY = (value, col) => {
+    const map = stringColMaps[col];
+    if (!map) return chartHeight / 2;
+    const normalized = map.positionMap[value] ?? 0.5;
+    return chartHeight - padding.bottom - (normalized * (chartHeight - padding.top - padding.bottom));
+  };
+
+  const getStringYFromIndex = (index, col) => {
+    const map = stringColMaps[col];
+    if (!map) return chartHeight / 2;
+    const normalized = index / Math.max(1, map.values.length - 1);
+    return chartHeight - padding.bottom - (normalized * (chartHeight - padding.top - padding.bottom));
+  };
 
   const getX = (colIndex) => padding.left + (colIndex / (allCols.length - 1)) * (chartWidth - padding.left - padding.right);
   const getY = (value, min, max) => {
@@ -62,16 +104,27 @@ export const ParallelCoordinates = ({
     const x = e.clientX - rect.left;
     const colFilters = filters[col] || [];
     const range = ranges[col];
+    const isStringCol = stringColsList.includes(col);
+    const stringMap = stringColMaps[col];
     
     if (Math.abs(x - getX(allCols.indexOf(col))) < 20) {
-      const clickedFilterIndex = colFilters.findIndex(f => {
-        const y1 = getY(f.min, range.min, range.max);
-        const y2 = getY(f.max, range.min, range.max);
-        return y >= Math.min(y1, y2) && y <= Math.max(y1, y2);
-      });
-      if (clickedFilterIndex !== -1) return onRemoveFilter(col, clickedFilterIndex);
+      if (isStringCol && stringMap) {
+        const clickedFilterIndex = colFilters.findIndex(f => {
+          const y1 = getStringY(stringMap.values[Math.round(f.min)], col);
+          const y2 = getStringY(stringMap.values[Math.round(f.max)], col);
+          return y >= Math.min(y1, y2) && y <= Math.max(y1, y2);
+        });
+        if (clickedFilterIndex !== -1) return onRemoveFilter(col, clickedFilterIndex);
+      } else if (range) {
+        const clickedFilterIndex = colFilters.findIndex(f => {
+          const y1 = getY(f.min, range.min, range.max);
+          const y2 = getY(f.max, range.min, range.max);
+          return y >= Math.min(y1, y2) && y <= Math.max(y1, y2);
+        });
+        if (clickedFilterIndex !== -1) return onRemoveFilter(col, clickedFilterIndex);
+      }
     }
-    setBrushing({ col, startY: y, currY: y });
+    setBrushing({ col, startY: y, currY: y, isStringCol });
   };
 
   const handleMouseMove = (e) => {
@@ -82,11 +135,20 @@ export const ParallelCoordinates = ({
 
   const handleMouseUp = () => {
     if (!brushing) return;
-    const { col, startY, currY } = brushing;
+    const { col, startY, currY, isStringCol } = brushing;
     const range = ranges[col];
+    const stringMap = stringColMaps[col];
+    
     if (Math.abs(startY - currY) < 3) {
       onClearColumnFilter(col);
-    } else {
+    } else if (isStringCol && stringMap) {
+      const h = chartHeight - padding.top - padding.bottom;
+      const normalized1 = (chartHeight - padding.bottom - startY) / h;
+      const normalized2 = (chartHeight - padding.bottom - currY) / h;
+      const idx1 = Math.max(0, Math.min(1, normalized1)) * (stringMap.values.length - 1);
+      const idx2 = Math.max(0, Math.min(1, normalized2)) * (stringMap.values.length - 1);
+      onAddFilter(col, { min: Math.min(idx1, idx2), max: Math.max(idx1, idx2) });
+    } else if (range) {
       const v1 = getValueFromY(startY, range.min, range.max);
       const v2 = getValueFromY(currY, range.min, range.max);
       onAddFilter(col, { min: Math.min(v1, v2), max: Math.max(v1, v2) });
@@ -119,7 +181,17 @@ export const ParallelCoordinates = ({
     <g className="pointer-events-none">
       {dataset.map(row => {
         const stroke = typeof strokeFn === 'function' ? strokeFn(row) : strokeFn;
-        const points = allCols.map((col, i) => `${getX(i)},${getY(row[col], ranges[col].min, ranges[col].max)}`).join(' ');
+        const points = allCols.map((col, i) => {
+          const isStringCol = stringColsList.includes(col);
+          let y;
+          if (isStringCol) {
+            y = getStringY(row[col], col);
+          } else {
+            const range = ranges[col];
+            y = range ? getY(row[col], range.min, range.max) : chartHeight / 2;
+          }
+          return `${getX(i)},${y}`;
+        }).join(' ');
         return <polyline key={row.id} points={points} fill="none" stroke={stroke} opacity={opacity} strokeWidth={strokeWidth} />;
       })}
     </g>
@@ -144,7 +216,8 @@ export const ParallelCoordinates = ({
     <div className="bg-white rounded-lg border border-zinc-200 shadow-sm mx-6 mt-6 overflow-hidden flex flex-col shrink-0">
       <div className="px-6 py-2 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-zinc-700 -mt-0.5">
+          <div className="flex items-center gap-2 text-zinc-700 -mt-0.5 cursor-grab active:cursor-grabbing">
+            <GripVertical size={14} className="text-zinc-400" />
             <BarChart3 size={16} strokeWidth={2} className="mt-0.5" />
             <h3 className="text-xs font-semibold uppercase tracking-wider">Parallel Coordinates</h3>
           </div>
@@ -208,6 +281,23 @@ export const ParallelCoordinates = ({
                 <option value="right">Right</option>
               </select>
             </div>
+
+            {stringColsList.length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowTextCols(!showTextCols)}
+                  className={`flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-medium rounded-sm transition-colors ${
+                    showTextCols 
+                      ? 'bg-cyan-100 text-cyan-700 border border-cyan-200' 
+                      : 'bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50'
+                  }`}
+                  title="Toggle text columns visibility"
+                >
+                  <Type size={12} />
+                  Text
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -252,8 +342,14 @@ export const ParallelCoordinates = ({
 
           {allCols.map((col, i) => {
             const x = getX(i);
+            const isStringCol = stringColsList.includes(col);
+            const isInputCol = columns.in.includes(col);
             const range = ranges[col];
             const colFilters = filters[col] || [];
+            const stringMap = stringColMaps[col];
+            
+            const colColor = isInputCol ? ioColors.input : ioColors.output;
+            const colColorLight = isInputCol ? ioColors.inputLight : ioColors.outputLight;
             
             return (
               <g key={col}>
@@ -263,13 +359,58 @@ export const ParallelCoordinates = ({
                   fill="transparent" className="cursor-crosshair hover:fill-zinc-50/50"
                   onMouseDown={(e) => handleMouseDown(e, col)}
                 />
-                <text x={x} y={padding.top - 30} textAnchor="middle" className={`text-[10px] font-bold uppercase tracking-wider ${colFilters.length > 0 ? 'fill-cyan-600' : 'fill-zinc-700'}`}>
+                <text 
+                  x={x} 
+                  y={padding.top - 30} 
+                  textAnchor="middle" 
+                  className="text-[10px] font-bold uppercase tracking-wider"
+                  style={{ fill: colFilters.length > 0 ? '#0891b2' : colColor }}
+                >
                   {cleanName(col).length > 12 ? cleanName(col).substr(0, 10) + '..' : cleanName(col)}
                   <title>{cleanName(col)}</title>
                 </text>
-                <text x={x} y={chartHeight - padding.bottom + 15} textAnchor="middle" className="text-[12.5px] fill-zinc-700 font-mono pointer-events-none">{range.min.toFixed(1)}</text>
-                <text x={x} y={padding.top - 5} textAnchor="middle" className="text-[12.5px] fill-zinc-700 font-mono pointer-events-none">{range.max.toFixed(1)}</text>
+                {isStringCol && stringMap ? (
+                  <>
+                    {stringMap.values.map((val, idx) => (
+                      <text 
+                        key={val} 
+                        x={x} 
+                        y={getStringY(val, col)} 
+                        textAnchor="middle" 
+                        className="text-[9px] pointer-events-none"
+                        style={{ fill: colColor }}
+                        dy="0.3em"
+                      >
+                        {String(val).length > 8 ? String(val).substr(0, 6) + '..' : String(val)}
+                        <title>{String(val)}</title>
+                      </text>
+                    ))}
+                    {stringMap.values.map((val, idx) => (
+                      <circle
+                        key={`dot-${val}`}
+                        cx={x}
+                        cy={getStringY(val, col)}
+                        r={3}
+                        fill={colColorLight}
+                        stroke={colColor}
+                        strokeWidth={1}
+                        opacity={0.8}
+                      />
+                    ))}
+                  </>
+                ) : (
+                  <>
+                    <text x={x} y={chartHeight - padding.bottom + 15} textAnchor="middle" className="text-[12.5px] font-mono pointer-events-none" style={{ fill: colColor }}>{range?.min?.toFixed(1)}</text>
+                    <text x={x} y={padding.top - 5} textAnchor="middle" className="text-[12.5px] font-mono pointer-events-none" style={{ fill: colColor }}>{range?.max?.toFixed(1)}</text>
+                  </>
+                )}
                 {colFilters.map((filter, idx) => {
+                  if (isStringCol && stringMap) {
+                    const y1 = getStringYFromIndex(filter.min, col);
+                    const y2 = getStringYFromIndex(filter.max, col);
+                    return <rect key={idx} x={x - 4} y={Math.min(y1, y2)} width={8} height={Math.abs(y1 - y2)} fill="#06b6d4" opacity={0.3} rx={1} className="pointer-events-none" />;
+                  }
+                  if (!range) return null;
                   const y1 = getY(filter.min, range.min, range.max);
                   const y2 = getY(filter.max, range.min, range.max);
                   return <rect key={idx} x={x - 4} y={Math.min(y1, y2)} width={8} height={Math.abs(y1 - y2)} fill="#06b6d4" opacity={0.3} rx={1} className="pointer-events-none" />;

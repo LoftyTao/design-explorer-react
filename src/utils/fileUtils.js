@@ -29,6 +29,8 @@ export const createDataset = async (id, name, type, csvText, zipObject = null, o
     await Promise.all(headers.map(async (header, i) => {
       let val = values[i];
       if (header.startsWith('img:') && val) {
+         const originalFileName = val.split('/').pop();
+         row[`_imgName_${header}`] = originalFileName;
          if (type === 'builtin') {
              val = `/${id}/${val}`;
          } else if (zipObject) {
@@ -57,6 +59,10 @@ export const createDataset = async (id, name, type, csvText, zipObject = null, o
     return parsedData.some(row => typeof row[col] === 'number');
   });
 
+  const stringCols = [...cols.in, ...cols.out].filter(col => {
+    return parsedData.some(row => typeof row[col] === 'string');
+  });
+
   const calculatedRanges = {};
   numericCols.forEach(col => {
     const values = parsedData.map(d => d[col]).filter(v => typeof v === 'number');
@@ -79,6 +85,7 @@ export const createDataset = async (id, name, type, csvText, zipObject = null, o
     data: parsedData,
     columns: cols,
     numericCols,
+    stringCols,
     ranges: calculatedRanges,
     defaultColorBy: bestCol,
     defaultImgCol: cols.img.length > 0 ? cols.img[0] : null

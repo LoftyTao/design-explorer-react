@@ -1,11 +1,14 @@
-import { XCircle, ArrowUpDown, ArrowUp, ArrowDown, Table2 } from 'lucide-react';
+import { XCircle, ArrowUpDown, ArrowUp, ArrowDown, Table2, GripVertical } from 'lucide-react';
 import { cleanName } from '../../utils/constants';
 import { Pagination } from '../ui/Pagination';
-import { useEffect, useRef } from 'react';
+import { getInputOutputColors } from '../../utils/colorUtils';
+import { useEffect, useRef, useMemo } from 'react';
 
-export const InteractiveTable = ({ data, columns, selectedIds, onRowToggle, onClearSelection, sortConfig, onSort, onClearSorts, currentPage, itemsPerPage, onPageChange }) => {
+export const InteractiveTable = ({ data, columns, selectedIds, onRowToggle, onClearSelection, sortConfig, onSort, onClearSorts, currentPage, itemsPerPage, onPageChange, paletteName }) => {
   const tableBodyRef = useRef(null);
   const tableContainerRef = useRef(null);
+  
+  const ioColors = useMemo(() => getInputOutputColors(paletteName), [paletteName]);
 
   useEffect(() => {
     if (selectedIds.size === 1) {
@@ -58,7 +61,8 @@ export const InteractiveTable = ({ data, columns, selectedIds, onRowToggle, onCl
     <div className="bg-white rounded-lg border border-zinc-200 shadow-sm mx-6 mt-6 flex flex-col shrink-0 overflow-hidden">
       <div className="px-6 py-2 bg-zinc-50/50 border-b border-zinc-100 flex justify-between items-center">
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-zinc-700">
+          <div className="flex items-center gap-2 text-zinc-700 cursor-grab active:cursor-grabbing">
+            <GripVertical size={14} className="text-zinc-400" />
             <Table2 size={16} strokeWidth={2} className="mt-0.5" />
             <h3 className="text-xs font-semibold uppercase tracking-wider">Data Table</h3>
           </div>
@@ -83,13 +87,13 @@ export const InteractiveTable = ({ data, columns, selectedIds, onRowToggle, onCl
             <tr>
               <th className="px-4 py-2 border-b border-zinc-100 bg-zinc-50/80 w-16 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">ID</th>
               {columns.in.map(c => (
-                <th key={c} className="px-4 py-2 border-b border-zinc-100 bg-zinc-50/80 cursor-pointer hover:bg-zinc-100 transition-colors select-none group" onClick={() => onSort(c)}>
-                  <div className="flex items-center text-zinc-600 font-medium group-hover:text-zinc-900">{cleanName(c)} {getSortIcon(c)}</div>
+                <th key={c} className="px-4 py-2 border-b border-zinc-100 cursor-pointer hover:opacity-80 transition-colors select-none group" style={{ backgroundColor: ioColors.inputLight }} onClick={() => onSort(c)}>
+                  <div className="flex items-center font-medium group-hover:opacity-70" style={{ color: ioColors.input }}>{cleanName(c)} {getSortIcon(c)}</div>
                 </th>
               ))}
               {columns.out.map(c => (
-                <th key={c} className="px-4 py-2 border-b border-zinc-100 bg-zinc-50/80 cursor-pointer hover:bg-zinc-100 transition-colors select-none group" onClick={() => onSort(c)}>
-                  <div className="flex items-center text-zinc-600 font-medium group-hover:text-zinc-900">{cleanName(c)} {getSortIcon(c)}</div>
+                <th key={c} className="px-4 py-2 border-b border-zinc-100 cursor-pointer hover:opacity-80 transition-colors select-none group" style={{ backgroundColor: ioColors.outputLight }} onClick={() => onSort(c)}>
+                  <div className="flex items-center font-medium group-hover:opacity-70" style={{ color: ioColors.output }}>{cleanName(c)} {getSortIcon(c)}</div>
                 </th>
               ))}
             </tr>
@@ -108,8 +112,8 @@ export const InteractiveTable = ({ data, columns, selectedIds, onRowToggle, onCl
                       #{row.id}
                     </div>
                   </td>
-                  {columns.in.map(c => <td key={c} className={`px-4 py-1.5 font-medium ${isSelected ? 'text-zinc-900' : 'text-zinc-600'}`}>{row[c]}</td>)}
-                  {columns.out.map(c => <td key={c} className={`px-4 py-1.5 ${isSelected ? 'text-zinc-900' : 'text-zinc-500'}`}>{typeof row[c] === 'number' ? row[c].toFixed(2) : row[c]}</td>)}
+                  {columns.in.map(c => <td key={c} className="px-4 py-1.5 font-medium" style={{ color: ioColors.input }}>{row[c]}</td>)}
+                  {columns.out.map(c => <td key={c} className="px-4 py-1.5" style={{ color: ioColors.output }}>{typeof row[c] === 'number' ? row[c].toFixed(2) : row[c]}</td>)}
                 </tr>
               );
             })}

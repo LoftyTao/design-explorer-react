@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { FilterService } from '../services/FilterService';
 
-export function useFilters(data) {
+export function useFilters(data, stringCols) {
   const [filters, setFilters] = useState({});
   const filterServiceRef = useRef(new FilterService());
   const prevDataRef = useRef(null);
@@ -16,6 +16,15 @@ export function useFilters(data) {
       prevDataRef.current = currentDataId;
     }
   }, [data]);
+
+  useEffect(() => {
+    if (stringCols && stringCols.length > 0) {
+      stringCols.forEach(col => {
+        const uniqueValues = [...new Set(data.map(row => row[col]))].filter(v => v !== undefined && v !== null);
+        filterServiceRef.current.setStringColMap(col, uniqueValues);
+      });
+    }
+  }, [data, stringCols]);
 
   const filteredData = useMemo(() => {
     return filterServiceRef.current.applyFilters(data);

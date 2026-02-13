@@ -59,3 +59,19 @@ export const getGradientString = (paletteName, direction = 'to right') => {
   const stops = palette.map(c => `rgb(${c.join(',')})`).join(', ');
   return `linear-gradient(${direction}, ${stops})`;
 };
+
+export const getInputOutputColors = (paletteName = 'originalLadybug') => {
+  const palette = COLOR_PALETTES[paletteName] || COLOR_PALETTES.originalLadybug;
+  
+  const inputColor = palette[0];
+  const outputColor = palette[palette.length - 1];
+  
+  return {
+    input: `rgb(${inputColor.join(',')})`,
+    output: `rgb(${outputColor.join(',')})`,
+    inputLight: `rgba(${inputColor.join(',')}, 0.15)`,
+    outputLight: `rgba(${outputColor.join(',')}, 0.15)`,
+    inputText: `rgb(${inputColor.join(',')})`,
+    outputText: `rgb(${outputColor.join(',')})`
+  };
+};

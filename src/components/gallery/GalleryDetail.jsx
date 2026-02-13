@@ -1,7 +1,8 @@
 import { Layers, CheckCircle2 } from 'lucide-react';
-import { getColor } from '../../utils/colorUtils';
+import { getColor, getInputOutputColors } from '../../utils/colorUtils';
 import { cleanName } from '../../utils/constants';
 import { ImageStage } from './ImageStage';
+import { useMemo } from 'react';
 
 export const GalleryDetail = ({ 
   activeGalleryItem, 
@@ -14,6 +15,8 @@ export const GalleryDetail = ({
   setImageFitMode,
   selectedIds
 }) => {
+  const ioColors = useMemo(() => getInputOutputColors(paletteName), [paletteName]);
+
   if (!activeGalleryItem) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-zinc-300 gap-3">
@@ -45,31 +48,31 @@ export const GalleryDetail = ({
           </div>
           <div className="w-px h-6 bg-zinc-300"></div>
           {activeImgCol && activeGalleryItem[activeImgCol] && (
-            <span className="text-base font-mono font-bold text-zinc-800 truncate max-w-xs" title={activeGalleryItem[activeImgCol]}>
-              {activeGalleryItem[activeImgCol].split('/').pop()}
+            <span className="text-base font-mono font-bold text-zinc-800 truncate max-w-xs" title={activeGalleryItem[`_imgName_${activeImgCol}`] || activeGalleryItem[activeImgCol].split('/').pop()}>
+              {activeGalleryItem[`_imgName_${activeImgCol}`] || activeGalleryItem[activeImgCol].split('/').pop()}
             </span>
           )}
         </div>
 
         <div className="grid grid-cols-2 gap-x-16 gap-y-8">
           <div className="space-y-2">
-            <h4 className="text-[10px] font-bold text-zinc-900 uppercase tracking-widest mb-3 border-b border-zinc-100 pb-2">Inputs</h4>
+            <h4 className="text-[10px] font-bold uppercase tracking-widest mb-3 border-b pb-2" style={{ color: ioColors.input, borderColor: ioColors.inputLight }}>Inputs</h4>
             {columns.in.map(col => (
               <div key={col} className="flex justify-between items-center text-xs py-0.5 group">
-                <span className="text-zinc-600 group-hover:text-zinc-800 transition-colors">{cleanName(col)}</span>
-                <span className="font-mono font-bold text-zinc-900">{activeGalleryItem[col]}</span>
+                <span className="group-hover:opacity-70 transition-colors" style={{ color: ioColors.input }}>{cleanName(col)}</span>
+                <span className="font-mono font-bold" style={{ color: ioColors.input }}>{activeGalleryItem[col]}</span>
               </div>
             ))}
           </div>
 
           <div className="space-y-2">
-            <h4 className="text-[10px] font-bold text-zinc-900 uppercase tracking-widest mb-3 border-b border-zinc-100 pb-2">Outputs</h4>
+            <h4 className="text-[10px] font-bold uppercase tracking-widest mb-3 border-b pb-2" style={{ color: ioColors.output, borderColor: ioColors.outputLight }}>Outputs</h4>
             {columns.out.map(col => (
               <div key={col} className="flex justify-between items-center text-xs py-0.5 group">
-                <span className="text-zinc-600 group-hover:text-zinc-800 transition-colors">{cleanName(col)}</span>
+                <span className="group-hover:opacity-70 transition-colors" style={{ color: ioColors.output }}>{cleanName(col)}</span>
                 <span 
                   className="font-mono font-bold"
-                  style={col === colorBy ? { color: getColor(activeGalleryItem[col], ranges[col].min, ranges[col].max, paletteName) } : { color: '#27272a' }}
+                  style={col === colorBy ? { color: getColor(activeGalleryItem[col], ranges[col].min, ranges[col].max, paletteName) } : { color: ioColors.output }}
                 >
                   {typeof activeGalleryItem[col] === 'number' ? activeGalleryItem[col].toLocaleString(undefined, { maximumFractionDigits: 2 }) : activeGalleryItem[col]}
                 </span>
